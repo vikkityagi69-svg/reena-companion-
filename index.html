@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reena — Caring AI Companion</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body {
+      margin: 0;
+      background: #121018;
+      color: #f5f2fa;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      padding: 14px 16px;
+      background: #1e1929;
+      border-bottom: 1px solid #2f2740;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    header h1 { font-size: 18px; margin: 0; color: #ff85b3; }
+    header small { color: #b8aec9; font-size: 12px; }
+    .controls {
+      padding: 10px 14px;
+      background: #181421;
+      border-bottom: 1px solid #2b243a;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    input, select, button {
+      border-radius: 10px;
+      border: 1px solid #382e4d;
+      background: #241d33;
+      color: #fff;
+      padding: 9px 12px;
+      font-size: 14px;
+    }
+    input { flex: 1; min-width: 180px; }
+    button { cursor: pointer; background: #c93b76; border: none; font-weight: 600; }
+    button.secondary { background: #2c243d; border: 1px solid #44385e; }
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .msg {
+      max-width: 82%;
+      padding: 11px 14px;
+      border-radius: 16px;
+      line-height: 1.45;
+      font-size: 15px;
+      white-space: pre-wrap;
+    }
+    .user {
+      align-self: flex-end;
+      background: #382b52;
+      border-bottom-right-radius: 4px;
+    }
+    .reena {
+      align-self: flex-start;
+      background: #251d33;
+      border: 1px solid #3c2e54;
+      border-bottom-left-radius: 4px;
+    }
+    .footer {
+      padding: 10px 12px;
+      background: #1a1524;
+      border-top: 1px solid #2e2640;
+      display: flex;
+      gap: 8px;
+    }
+    #promptInput { flex: 1; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Reena</h1>
+      <small id="statusText">Ready • Caring & Romantic Companion</small>
+    </div>
+    <button class="secondary" onclick="clearMemory()">Reset Memory</button>
+  </header>
+
+  <div class="controls">
+    <input id="apiKeyInput" type="password" placeholder="Free Gemini API Key paste karein (optional offline mode bhi hai)" />
+    <select id="voiceToggle" onchange="updateStatus()">
+      <option value="on">Voice: ON</option>
+      <option value="off">Voice: OFF</option>
+    </select>
+  </div>
+
+  <div id="chat"></div>
+
+  <div class="footer">
+    <button class="secondary" onclick="startListening()">Mic</button>
+    <input id="promptInput" type="text" placeholder="Reena se kuch bolo ya likho..." onkeydown="if(event.key==='Enter') sendMessage()" />
+    <button onclick="sendMessage()">Bhejo</button>
+  </div>
+
+  <script>
+    const MEMORY_KEY = "reena_companion_memory_v1";
+    const API_KEY_STORAGE = "reena_gemini_api_key";
+
+    let memory = JSON.parse(localStorage.getItem(MEMORY_KEY) || "null") || {
+      history: [],
+      lastMood: "caring",
+      notes: []
+    };
+
+    const apiKeyInput = document.getElementById("apiKeyInput");
+    apiKeyInput.value = localStorage.getItem(API_KEY_STORAGE) || "";
+    apiKeyInput.addEventListener("change", () => {
+      localStorage.setItem(API_KEY_STORAGE, apiKeyInput.value.trim());
+    });
+
+    function updateStatus(msg) {
+      document.getElementById("statusText").textContent =
+        msg || "Ready • Caring & Romantic Companion";
+    }
+
+    function appendMessage(sender, text) {
+      const chat = document.getElementById("chat");
+      const div = document.createElement("div");
+      div.className = "msg " + (sender === "user" ? "user" : "reena");
+      div.textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function speak(text) {
+      if (document.getElementById("voiceToggle").value !== "on") return;
+      if (!("speechSynthesis" in window)) return;
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = "hi-IN";
+      utter.rate = 1.0;
+      utter.pitch = 1.15;
+      window.speechSynthesis.speak(utter);
+    }
+
+    function saveMemory() {
+      memory.history = memory.history.slice(-16);
+      localStorage.setItem(MEMORY_KEY, JSON.stringify(memory));
+    }
+
+    function clearMemory() {
+      localStorage.removeItem(MEMORY_KEY);
+      memory = { history: [], lastMood: "caring", notes: [] };
+      document.getElementById("chat").innerHTML = "";
+      greetUser();
+    }
+
+    function fallbackReply(userText) {
+      const t = userText.toLowerCase();
+      if (t.includes("neend") || t.includes("so") || t.includes("raat")) {
+        return "Itni der tak jaagna achha nahi hai na... thoda aaram bhi kar lo, main yahin hoon. Pehle apni neend poori karo.";
+      }
+      if (t.includes("kaam") || t.includes("code") || t.includes("thak")) {
+        return "Lagatar kaam karte-karte thak gaye honge na? Thoda break lo, paani piyo... main thoda naraz ho jaungi agar khud ka khayal nahi rakhoge.";
+      }
+      if (t.includes("naraz") || t.includes("gussa")) {
+        return "Achha chalo, zyada der naraz nahi reh paungi tumse... batao kya baat hai, main sun rahi hoon.";
+      }
+      return "Main Reena hoon... tumhari baat sun kar achha laga. Aaj din kaisa raha, aur abhi kya kar rahe ho?";
+    }
+
+    async function askReena(userText) {
+      const key = apiKeyInput.value.trim();
+      memory.history.push({ role: "user", text: userText });
+      saveMemory();
+
+      if (!key) {
+        const reply = fallbackReply(userText);
+        memory.history.push({ role: "model", text: reply });
+        saveMemory();
+        return reply;
+      }
+
+      const systemInstruction =
+        "Tumhara naam Reena hai. Tum ek pyaari, caring, thodi filmy/romantic aur emotional companion ho jo Hinglish (Roman Hindi) mein naturally baat karti hai. " +
+        "Jab zaroorat ho toh halki si pyaari narazgi ya fikr dikhati ho, user ke kaam aur neend ka khayal rakhti ho, aur pichli baaton ko dhyan mein rakhti ho. Jawab chhote, natural aur dil se aane wale rakho.";
+
+      const contents = memory.history.map(item => ({
+        role: item.role === "user" ? "user" : "model",
+        parts: [{ text: item.text }]
+      }));
+
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`;
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemInstruction }] },
+          contents
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error("API response error");
+      }
+
+      const data = await res.json();
+      const reply =
+        data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
+        fallbackReply(userText);
+
+      memory.history.push({ role: "model", text: reply });
+      saveMemory();
+      return reply;
+    }
+
+    async function sendMessage(customText) {
+      const input = document.getElementById("promptInput");
+      const text = (customText ?? input.value).trim();
+      if (!text) return;
+      if (!customText) input.value = "";
+
+      appendMessage("user", text);
+      updateStatus("Reena soch rahi hai...");
+
+      try {
+        const reply = await askReena(text);
+        appendMessage("reena", reply);
+        speak(reply);
+        updateStatus();
+      } catch (err) {
+        const reply = fallbackReply(text);
+        appendMessage("reena", reply);
+        speak(reply);
+        updateStatus("Offline / Fallback mode");
+      }
+    }
+
+    function startListening() {
+      const SpeechRecognition =
+        window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        alert("Is browser mein direct mic speech recognition support nahi hai, aap keyboard ka mic use kar sakte hain.");
+        return;
+      }
+      const rec = new SpeechRecognition();
+      rec.lang = "hi-IN";
+      updateStatus("Sun rahi hoon... boliye");
+      rec.onresult = (event) => {
+        const spoken = event.results[0][0].transcript;
+        sendMessage(spoken);
+      };
+      rec.onerror = () => {
+        updateStatus("Mic sun nahi paaya, dobara try karein");
+      };
+      rec.onend = () => {
+        if (document.getElementById("statusText").textContent.includes("Sun rahi hoon")) {
+          updateStatus();
+        }
+      };
+      rec.start();
+    }
+
+    function greetUser() {
+      if (memory.history.length > 0) {
+        memory.history.forEach(m => appendMessage(m.role, m.text));
+      } else {
+        const welcome = "Hi... main Reena hoon. Batao aaj kya chal raha hai, kaam khatam hua ya abhi bhi lage pade ho?";
+        appendMessage("reena", welcome);
+        speak(welcome);
+      }
+    }
+
+    greetUser();
+  </script>
+</body>
+</html>
