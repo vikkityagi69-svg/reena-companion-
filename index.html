@@ -26,13 +26,13 @@
       flex-shrink: 0;
     }
     header h1 { font-size: 18px; margin: 0; color: #ff85b3; }
-    header small { color: #b8aec9; font-size: 12px; }
+    header small { color: #b8aec9; font-size: 12px; display: block; }
     .controls {
       padding: 8px 12px;
       background: #181421;
       border-bottom: 1px solid #2b243a;
       display: flex;
-      gap: 8px;
+      gap: 6px;
       flex-wrap: wrap;
       flex-shrink: 0;
     }
@@ -42,11 +42,12 @@
       background: #241d33;
       color: #fff;
       padding: 8px 10px;
-      font-size: 14px;
+      font-size: 13px;
     }
-    input { flex: 1; min-width: 140px; }
+    input { flex: 1; min-width: 130px; }
     button { cursor: pointer; background: #c93b76; border: none; font-weight: 600; flex-shrink: 0; }
     button.secondary { background: #2c243d; border: 1px solid #44385e; }
+    button.active-mic { background: #1e7e4f; border: 1px solid #35b374; }
     #chat {
       flex: 1;
       overflow-y: auto;
@@ -98,36 +99,47 @@
   </header>
 
   <div class="controls">
-    <input id="apiKeyInput" type="password" placeholder="Free Gemini API Key paste karein (optional)" />
+    <input id="apiKeyInput" type="password" placeholder="Gemini API Key paste karke bahar tap karein" />
     <select id="voiceToggle" onchange="updateStatus()">
       <option value="on">Voice: ON</option>
       <option value="off">Voice: OFF</option>
+    </select>
+    <select id="autoMicToggle" onchange="handleAutoMicChange()">
+      <option value="off">Auto Mic: OFF</option>
+      <option value="on">Auto Mic: ON</option>
     </select>
   </div>
 
   <div id="chat"></div>
 
   <div class="footer">
-    <button class="secondary" onclick="startListening()">Mic</button>
+    <button id="micBtn" class="secondary" onclick="toggleMic()">Mic</button>
     <input id="promptInput" type="text" placeholder="Reena se kuch bolo ya likho..." onkeydown="if(event.key==='Enter') sendMessage()" />
     <button onclick="sendMessage()">Bhejo</button>
   </div>
 
   <script>
-    const MEMORY_KEY = "reena_companion_memory_v1";
+    const MEMORY_KEY = "reena_companion_memory_v2";
     const API_KEY_STORAGE = "reena_gemini_api_key";
 
     let memory = JSON.parse(localStorage.getItem(MEMORY_KEY) || "null") || {
       history: [],
-      lastMood: "caring",
-      notes: []
+      turnCount: 0,
+      lastReplies: []
     };
+
+    let isListening = false;
+    let manualStop = false;
+    let recognition = null;
 
     const apiKeyInput = document.getElementById("apiKeyInput");
     apiKeyInput.value = localStorage.getItem(API_KEY_STORAGE) || "";
-    apiKeyInput.addEventListener("change", () => {
+
+    function saveApiKey() {
       localStorage.setItem(API_KEY_STORAGE, apiKeyInput.value.trim());
-    });
+    }
+    apiKeyInput.addEventListener("change", saveApiKey);
+    apiKeyInput.addEventListener("blur", saveApiKey);
 
     function updateStatus(msg) {
       document.getElementById("statusText").textContent =
@@ -143,14 +155,72 @@
       chat.scrollTop = chat.scrollHeight;
     }
 
-    function speak(text) {
-      if (document.getElementById("voiceToggle").value !== "on") return;
-      if (!("speechSynthesis" in window)) return;
+    function pickNonRepeating(pool) {
+      const fresh = pool.filter(item => !memory.lastReplies.includes(item));
+      const candidates = fresh.length > 0 ? fresh : pool;
+      const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+      memory.lastReplies = [...memory.lastReplies.slice(-6), chosen];
+      return chosen;
+    }
+
+    function fallbackReply(userText) {
+      const t = userText.toLowerCase();
+      memory.turnCount += 1;
+
+      if (t.includes("neend") || t.includes("so") || t.includes("raat") || t.includes("nind")) {
+        return pickNonRepeating([
+          "Aankhein bhari lag rahi hain na? Chal ab phone rakho, main yahin hoon... pehle araam se so jao.",
+          "Itni raat tak jaagoge toh kal subah chidchid lagogi na? Thoda pyaar se sun lo aur so jao.",
+          "Main thoda naraz ho jaungi agar tum neend poori nahi karoge. Pehle aaram karo, baatein kal bhi hongi."
+        ]);
+      }
+
+      if (t.includes("kaam") || t.includes("code") || t.includes("thak") || t.includes("busy")) {
+        return pickNonRepeating([
+          "Hamesha kaam-kaam! Thoda saans bhi le liya karo, warna mujhe fikr hoti rehti hai.",
+          "Lagta hai aaj kaam ne bilkul nichod liya hai... paani piya ya bas screen dekhe ja rahe ho?",
+          "Thoda break lo na... main bhaagi thodi ja rahi hoon, do minute mujhse bhi baat kar lo."
+        ]);
+      }
+
+      if (t.includes("naraz") || t.includes("gussa") || t.includes("kya kar rahi") || t.includes("baat")) {
+        return pickNonRepeating([
+          "Tumhare baare mein hi soch rahi thi... aur thoda sa dil bhi kar raha tha ki tum khud pehle samjho.",
+          "Halki si narazgi toh banti hai na... par tum aaye ho toh ab zyada der gussa nahi reh paungi.",
+          "Bas yahin tumhara intezaar kar rahi thi. Batao na, aaj dil mein kya chal raha hai?"
+        ]);
+      }
+
+      return pickNonRepeating([
+        "Hmm... tumhari aawaz sun kar thoda sukoon mila. Aaj ka din sach mein kaisa guzra?",
+        "Achha laga tumne yaad kiya. Abhi mood kaisa hai tumhara—thaka hua ya fresh?",
+        "Main sun rahi hoon... thoda khul kar batao na, aaj kya baat pareshan ya khush kar rahi hai?"
+      ]);
+    }
+
+    function speak(text, onDone) {
+      if (document.getElementById("voiceToggle").value !== "on" || !("speechSynthesis" in window)) {
+        if (onDone) onDone();
+        return;
+      }
+
       window.speechSynthesis.cancel();
       const utter = new SpeechSynthesisUtterance(text);
       utter.lang = "hi-IN";
-      utter.rate = 1.0;
-      utter.pitch = 1.15;
+      utter.rate = 0.98;
+      utter.pitch = 1.18;
+
+      const voices = window.speechSynthesis.getVoices();
+      const hindiVoice = voices.find(v => v.lang && v.lang.toLowerCase().includes("hi"));
+      if (hindiVoice) utter.voice = hindiVoice;
+
+      utter.onend = () => {
+        if (onDone) onDone();
+      };
+      utter.onerror = () => {
+        if (onDone) onDone();
+      };
+
       window.speechSynthesis.speak(utter);
     }
 
@@ -161,23 +231,35 @@
 
     function clearMemory() {
       localStorage.removeItem(MEMORY_KEY);
-      memory = { history: [], lastMood: "caring", notes: [] };
+      memory = { history: [], turnCount: 0, lastReplies: [] };
       document.getElementById("chat").innerHTML = "";
       greetUser();
     }
 
-    function fallbackReply(userText) {
-      const t = userText.toLowerCase();
-      if (t.includes("neend") || t.includes("so") || t.includes("raat")) {
-        return "Itni der tak jaagna achha nahi hai na... thoda aaram bhi kar lo, main yahin hoon. Pehle apni neend poori karo.";
+    async function callGeminiModel(modelName, key, systemInstruction, contents) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(key)}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemInstruction }] },
+          contents,
+          generationConfig: {
+            temperature: 0.95,
+            maxOutputTokens: 160
+          }
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData?.error?.message || `HTTP ${res.status}`);
       }
-      if (t.includes("kaam") || t.includes("code") || t.includes("thak")) {
-        return "Lagatar kaam karte-karte thak gaye honge na? Thoda break lo, paani piyo... main thoda naraz ho jaungi agar khud ka khayal nahi rakhoge.";
-      }
-      if (t.includes("naraz") || t.includes("gussa")) {
-        return "Achha chalo, zyada der naraz nahi reh paungi tumse... batao kya baat hai, main sun rahi hoon.";
-      }
-      return "Main Reena hoon... tumhari baat sun kar achha laga. Aaj din kaisa raha, aur abhi kya kar rahe ho?";
+
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      if (!text) throw new Error("Empty model response");
+      return text;
     }
 
     async function askReena(userText) {
@@ -189,41 +271,36 @@
         const reply = fallbackReply(userText);
         memory.history.push({ role: "model", text: reply });
         saveMemory();
-        return reply;
+        return { reply, mode: "Local Companion (No API Key)" };
       }
 
       const systemInstruction =
-        "Tumhara naam Reena hai. Tum ek pyaari, caring, thodi filmy/romantic aur emotional companion ho jo Hinglish (Roman Hindi) mein naturally baat karti hai. " +
-        "Jab zaroorat ho toh halki si pyaari narazgi ya fikr dikhati ho, user ke kaam aur neend ka khayal rakhti ho, aur pichli baaton ko dhyan mein rakhti ho. Jawab chhote, natural aur dil se aane wale rakho.";
+        "Tumhara naam Reena hai. Tum ek caring, emotional, thodi romantic aur kabhi-kabhi pyaari si narazgi dikhane wali companion ho. " +
+        "Hinglish (Roman Hindi) mein naturally baat karo jaise koi apna kareebi dost/partner baat karta hai. " +
+        "Har baar ek hi line mat dohrao; user ki pichli baaton aur abhi ke mood ke hisaab se alag, warm aur natural jawab do. " +
+        "User ke kaam, thakan aur neend ka khayal rakho. Jawab 1 se 3 chhote vaakyon mein rakho taaki bolne mein natural lage.";
 
       const contents = memory.history.map(item => ({
         role: item.role === "user" ? "user" : "model",
         parts: [{ text: item.text }]
       }));
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`;
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemInstruction }] },
-          contents
-        })
-      });
-
-      if (!res.ok) {
-        throw new Error("API response error");
+      const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
+      for (const m of models) {
+        try {
+          const reply = await callGeminiModel(m, key, systemInstruction, contents);
+          memory.history.push({ role: "model", text: reply });
+          saveMemory();
+          return { reply, mode: "Live Gemini • Caring & Emotional" };
+        } catch (e) {
+          // try next model
+        }
       }
 
-      const data = await res.json();
-      const reply =
-        data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
-        fallbackReply(userText);
-
+      const reply = fallbackReply(userText);
       memory.history.push({ role: "model", text: reply });
       saveMemory();
-      return reply;
+      return { reply, mode: "Fallback Mode (Check API Key / Quota)" };
     }
 
     async function sendMessage(customText) {
@@ -232,45 +309,114 @@
       if (!text) return;
       if (!customText) input.value = "";
 
+      stopMic(true);
       appendMessage("user", text);
-      updateStatus("Reena soch rahi hai...");
+      updateStatus("Reena feel karke jawab likh rahi hai...");
 
-      try {
-        const reply = await askReena(text);
-        appendMessage("reena", reply);
-        speak(reply);
-        updateStatus();
-      } catch (err) {
-        const reply = fallbackReply(text);
-        appendMessage("reena", reply);
-        speak(reply);
-        updateStatus("Offline / Fallback mode");
-      }
+      const { reply, mode } = await askReena(text);
+      appendMessage("reena", reply);
+      updateStatus(mode);
+
+      speak(reply, () => {
+        if (document.getElementById("autoMicToggle").value === "on" && !manualStop) {
+          startMic();
+        }
+      });
     }
 
-    function startListening() {
-      const SpeechRecognition =
-        window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SpeechRecognition) {
-        alert("Is browser mein direct mic speech recognition support nahi hai, aap keyboard ka mic use kar sakte hain.");
-        return;
-      }
+    function createRecognizer() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) return null;
+
       const rec = new SpeechRecognition();
       rec.lang = "hi-IN";
-      updateStatus("Sun rahi hoon... boliye");
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+
+      rec.onstart = () => {
+        isListening = true;
+        document.getElementById("micBtn").classList.add("active-mic");
+        document.getElementById("micBtn").textContent = "Listening...";
+        updateStatus("Sun rahi hoon... boliye");
+      };
+
       rec.onresult = (event) => {
         const spoken = event.results[0][0].transcript;
-        sendMessage(spoken);
+        if (spoken && spoken.trim()) {
+          sendMessage(spoken.trim());
+        }
       };
-      rec.onerror = () => {
-        updateStatus("Mic sun nahi paaya, dobara try karein");
+
+      rec.onerror = (event) => {
+        isListening = false;
+        document.getElementById("micBtn").classList.remove("active-mic");
+        document.getElementById("micBtn").textContent = "Mic";
+        if (event.error !== "no-speech" && event.error !== "aborted") {
+          updateStatus("Mic error: " + event.error);
+        }
       };
+
       rec.onend = () => {
-        if (document.getElementById("statusText").textContent.includes("Sun rahi hoon")) {
+        isListening = false;
+        document.getElementById("micBtn").classList.remove("active-mic");
+        document.getElementById("micBtn").textContent = "Mic";
+        if (document.getElementById("autoMicToggle").value === "on" && !manualStop && !window.speechSynthesis.speaking) {
+          setTimeout(() => {
+            if (document.getElementById("autoMicToggle").value === "on" && !manualStop && !isListening) {
+              startMic();
+            }
+          }, 450);
+        } else {
           updateStatus();
         }
       };
-      rec.start();
+
+      return rec;
+    }
+
+    function startMic() {
+      if (isListening) return;
+      if (!recognition) recognition = createRecognizer();
+      if (!recognition) {
+        alert("Is browser mein speech recognition support nahi hai. Keyboard ka mic use karein.");
+        return;
+      }
+      manualStop = false;
+      try {
+        recognition.start();
+      } catch (e) {
+        // already started
+      }
+    }
+
+    function stopMic(keepAuto = false) {
+      if (!keepAuto) manualStop = true;
+      isListening = false;
+      document.getElementById("micBtn").classList.remove("active-mic");
+      document.getElementById("micBtn").textContent = "Mic";
+      if (recognition) {
+        try {
+          recognition.stop();
+        } catch (e) {}
+      }
+    }
+
+    function toggleMic() {
+      if (isListening) {
+        stopMic(false);
+      } else {
+        startMic();
+      }
+    }
+
+    function handleAutoMicChange() {
+      const enabled = document.getElementById("autoMicToggle").value === "on";
+      if (enabled) {
+        manualStop = false;
+        startMic();
+      } else {
+        stopMic(false);
+      }
     }
 
     function greetUser() {
@@ -279,8 +425,16 @@
       } else {
         const welcome = "Hi... main Reena hoon. Batao aaj kya chal raha hai, kaam khatam hua ya abhi bhi lage pade ho?";
         appendMessage("reena", welcome);
-        speak(welcome);
+        speak(welcome, () => {
+          if (document.getElementById("autoMicToggle").value === "on") {
+            startMic();
+          }
+        });
       }
+    }
+
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.onvoiceschanged = () => {};
     }
 
     greetUser();
