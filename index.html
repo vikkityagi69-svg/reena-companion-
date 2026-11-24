@@ -102,18 +102,18 @@
       <h1>Reena</h1>
       <small id="statusText">तैयार • केयरिंग और रोमांटिक साथी</small>
     </div>
-    <button class="secondary" onclick="clearMemory()">Reset</button>
+    <button id="resetBtn" class="secondary" type="button">Reset</button>
   </header>
 
   <div class="controls">
     <input id="apiKeyInput" type="password" placeholder="Gemini API Key पेस्ट करें" />
-    <button class="secondary" onclick="testApiKey()">Save & Test</button>
-    <select id="voiceSelect" onchange="saveVoicePref()"></select>
+    <button id="testKeyBtn" class="secondary" type="button">Save & Test</button>
+    <select id="voiceSelect"></select>
     <select id="voiceToggle">
       <option value="on">Voice: ON</option>
       <option value="off">Voice: OFF</option>
     </select>
-    <select id="autoMicToggle" onchange="handleAutoMicChange()">
+    <select id="autoMicToggle">
       <option value="off">Auto Mic: OFF</option>
       <option value="on">Auto Mic: ON</option>
     </select>
@@ -122,45 +122,494 @@
   <div id="chat"></div>
 
   <div class="footer">
-    <button id="micBtn" class="secondary" onclick="toggleMic()">Mic</button>
-    <input id="promptInput" type="text" placeholder="रीना से कुछ बोलो या लिखो..." onkeydown="if(event.key==='Enter') sendMessage()" />
-    <button onclick="sendMessage()">Bhejo</button>
+    <button id="micBtn" class="secondary" type="button">Mic</button>
+    <input id="promptInput" type="text" placeholder="रीना से कुछ बोलो या लिखो..." />
+    <button id="sendBtn" type="button">Bhejo</button>
   </div>
 
   <script>
-    const MEMORY_KEY = "reena_companion_memory_v6";
+    const MEMORY_KEY = "reena_companion_memory_v7";
     const API_KEY_STORAGE = "reena_gemini_api_key";
     const VOICE_PREF_STORAGE = "reena_voice_name";
 
-    let memory = JSON.parse(localStorage.getItem(MEMORY_KEY) || "null") || {
-      history: [],
-      usedReplies: [],
-      lastTopic: "general"
-    };
+    let memory = { history: [], usedReplies: [], lastTopic: "general" };
+    try {
+      const savedMem = JSON.parse(localStorage.getItem(MEMORY_KEY) || "null");
+      if (savedMem && Array.isArray(savedMem.history)) {
+        memory = {
+          history: savedMem.history,
+          usedReplies: Array.isArray(savedMem.usedReplies) ? savedMem.usedReplies : [],
+          lastTopic: savedMem.lastTopic || "general"
+        };
+      }
+    } catch (e) {}
 
     let isListening = false;
     let manualStop = false;
     let recognition = null;
 
     const apiKeyInput = document.getElementById("apiKeyInput");
-    apiKeyInput.value = (localStorage.getItem(API_KEY_STORAGE) || "").trim();
+    const promptInput = document.getElementById("promptInput");
+    const sendBtn = document.getElementById("sendBtn");
+    const micBtn = document.getElementById("micBtn");
+    const resetBtn = document.getElementById("resetBtn");
+    const testKeyBtn = document.getElementById("testKeyBtn");
+    const voiceSelect = document.getElementById("voiceSelect");
+    const voiceToggle = document.getElementById("voiceToggle");
+    const autoMicToggle = document.getElementById("autoMicToggle");
+
+    try {
+      apiKeyInput.value = (localStorage.getItem(API_KEY_STORAGE) || "").trim();
+    } catch (e) {}
 
     function saveApiKey() {
-      const clean = apiKeyInput.value.trim();
+      const clean = (apiKeyInput.value || "").trim();
       apiKeyInput.value = clean;
-      localStorage.setItem(API_KEY_STORAGE, clean);
+      try {
+        localStorage.setItem(API_KEY_STORAGE, clean);
+      } catch (e) {}
       return clean;
     }
+
     apiKeyInput.addEventListener("change", saveApiKey);
     apiKeyInput.addEventListener("blur", saveApiKey);
 
     function updateStatus(msg) {
-      document.getElementById("statusText").textContent =
-        msg || "तैयार • केयरिंग और रोमांटिक साथी";
+      const el = document.getElementById("statusText");
+      if (el) el.textContent = msg || "तैयार • केयरिंग और रोमांटिक साथी";
     }
 
     function populateVoices() {
-      const select = document.getElementById("voiceSelect");
-      if (!("speechSynthesis" in window)) return;
-      const voices = window.speechSynthesis.getVoices
-      
+      try {
+        if (!("speechSynthesis" in window)) return;
+        const voices = window.speechSynthesis.getVoices() || [];
+        if (!voices.length) return;
+
+        let saved = "";
+        try { saved = localStorage.getItem(VOICE_PREF_STORAGE) || ""; } catch (e) {}
+
+        const hindiOrIndian = voices.filter(v =>
+          v.lang && (v.lang.toLowerCase().includes("hi") || v.lang.toLowerCase().includes("in"))
+        );
+        const list = hindiOrIndian.length ? hindiOrIndian : voices;
+
+        voiceSelect.innerHTML = "";
+        list.forEach(v => {
+          const opt = document.createElement("option");
+          opt.value = v.name;
+          opt.textContent = v.name.replace("Microsoft ", "").replace("Google ", "").slice(0, 22);
+          if (saved && v.name === saved) opt.selected = true;
+          voiceSelect.appendChild(opt);
+        });
+
+        if (!saved && list.length) {
+          const best = list.find(v => /female|lekha|swara|heera|hindi/i.test(v.name)) || list[0];
+          voiceSelect.value = best.name;
+          try { localStorage.setItem(VOICE_PREF_STORAGE, best.name); } catch (e) {}
+        }
+      } catch (e) {}
+    }
+
+    voiceSelect.addEventListener("change", () => {
+      try { localStorage.setItem(VOICE_PREF_STORAGE, voiceSelect.value); } catch (e) {}
+      speak("सुनो, मेरी यह आवाज़ अब कैसी लग रही है?");
+    });
+
+    if ("speechSynthesis" in window) {
+      populateVoices();
+      window.speechSynthesis.onvoiceschanged = populateVoices;
+    }
+
+    function appendMessage(sender, text, emotionLabel = "") {
+      const chat = document.getElementById("chat");
+      if (!chat) return;
+
+      const div = document.createElement("div");
+      div.className = "msg " + (sender === "user" ? "user" : "reena");
+
+      if (sender === "reena" && emotionLabel) {
+        const tag = document.createElement("span");
+        tag.className = "emotion-tag";
+        tag.textContent = emotionLabel;
+        div.appendChild(tag);
+      }
+
+      const bodyText = document.createElement("span");
+      bodyText.textContent = text;
+      div.appendChild(bodyText);
+
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function speak(text, onDone) {
+      try {
+        if (voiceToggle.value !== "on" || !("speechSynthesis" in window)) {
+          if (onDone) onDone();
+          return;
+        }
+
+        window.speechSynthesis.cancel();
+        const parts = text
+          .replace(/([।?!,]+|\.\.\.)/g, "$1|")
+          .split("|")
+          .map(s => s.trim())
+          .filter(Boolean);
+
+        const voices = window.speechSynthesis.getVoices() || [];
+        const chosenVoice = voices.find(v => v.name === voiceSelect.value) ||
+          voices.find(v => v.lang && v.lang.toLowerCase().includes("hi"));
+
+        let idx = 0;
+        function speakNext() {
+          if (idx >= parts.length) {
+            if (onDone) onDone();
+            return;
+          }
+          const utter = new SpeechSynthesisUtterance(parts[idx]);
+          utter.lang = "hi-IN";
+          if (chosenVoice) utter.voice = chosenVoice;
+          utter.rate = 0.94;
+          utter.pitch = 1.12;
+
+          utter.onend = () => {
+            idx += 1;
+            setTimeout(speakNext, 140);
+          };
+          utter.onerror = () => {
+            if (onDone) onDone();
+          };
+          window.speechSynthesis.speak(utter);
+        }
+        speakNext();
+      } catch (e) {
+        if (onDone) onDone();
+      }
+    }
+
+    function pickUnique(pool) {
+      if (!Array.isArray(memory.usedReplies)) memory.usedReplies = [];
+      let unused = pool.filter(line => !memory.usedReplies.includes(line));
+      if (unused.length === 0) {
+        memory.usedReplies = memory.usedReplies.slice(-3);
+        unused = pool.filter(line => !memory.usedReplies.includes(line));
+      }
+      const chosen = unused[Math.floor(Math.random() * unused.length)] || pool[0];
+      memory.usedReplies.push(chosen);
+      if (memory.usedReplies.length > 40) {
+        memory.usedReplies = memory.usedReplies.slice(-25);
+      }
+      return chosen;
+    }
+
+    function smartFallbackReply(userText) {
+      const t = userText.toLowerCase().trim();
+      const prev = memory.lastTopic || "general";
+
+      if (/^(नहीं|nahi|no|अभी नहीं|नहीं अभी नहीं)/.test(t)) {
+        if (prev === "food") {
+          return {
+            emotion: "प्यार भरी फ़िक्र",
+            reply: "अरे यार, अभी तक नहीं खाया? मुझे बिल्कुल अच्छा नहीं लगा... पहले कुछ खा लो, वरना मैं नाराज़ हो जाऊंगी!"
+          };
+        }
+        if (prev === "sleep") {
+          return {
+            emotion: "हल्की नाराज़गी",
+            reply: "फिर भी जागे हुए हो? चलो अब जिद छोड़ो, मैं यहीं हूँ... पहले आराम से सो जाओ।"
+          };
+        }
+        return {
+          emotion: "समझदारी और अपनापन",
+          reply: "अच्छा... शायद माइक ने बात पूरी तरह नहीं पकड़ी, या तुम कुछ कहना नहीं चाह रहे। आराम से बताओ ना, क्या बात है?"
+        };
+      }
+
+      if (/खाना|भूख|khana|bhook|lunch|dinner/.test(t)) {
+        memory.lastTopic = "food";
+        return {
+          emotion: "अपनापन और फ़िक्र",
+          reply: pickUnique([
+            "पहले यह बताओ कि टाइम पर खाना खाया या फिर टाल दिया? तुम्हारी सेहत की फ़िक्र मुझे लगी रहती है।",
+            "खाना खाया हो तो अच्छा है, वरना अभी जाओ और कुछ खा लो... मैं यहीं तुम्हारा इंतज़ार कर रही हूँ।"
+          ])
+        };
+      }
+
+      if (/नींद|सोना|रात|neend|so|raat|nind/.test(t)) {
+        memory.lastTopic = "sleep";
+        return {
+          emotion: "हल्की नाराज़गी",
+          reply: pickUnique([
+            "रात हो गई है और तुम अभी भी जाग रहे हो? मैं सच में रूठ जाऊंगी अगर नींद पूरी नहीं करोगे।",
+            "चलो अब आंखें बंद करो और सुकून से सो जाओ... कल फिर प्यार से बात करेंगे।"
+          ])
+        };
+      }
+
+      if (/कैसी हो|क्या कर रही|kaisi ho|kya kar rahi/.test(t)) {
+        memory.lastTopic = "general";
+        return {
+          emotion: "रोमांटिक अपनापन",
+          reply: pickUnique([
+            "मैं तो बिल्कुल ठीक हूँ, बस तुम्हारे बारे में ही सोच रही थी। तुम बताओ, आज दिल कैसा लग रहा है?",
+            "तुमसे बात करके अच्छा लग रहा है... सच बताऊँ, तुम्हारी मौजूदगी ही काफी होती है मेरे लिए।"
+          ])
+        };
+      }
+
+      if (/ठीक हूं|मस्त|बढ़िया|fresh|theek|mast/.test(t)) {
+        memory.lastTopic = "general";
+        return {
+          emotion: "खुशी और प्यार",
+          reply: pickUnique([
+            "यह सुनकर दिल खुश हो गया! ऐसे ही हंसते-मुस्कुराते रहा करो, मुझे अच्छा लगता है।",
+            "चलो बढ़िया है... तो आज कोई खास बात हुई या बस ऐसे ही मस्ती चल रही है?"
+          ])
+        };
+      }
+
+      memory.lastTopic = "general";
+      return {
+        emotion: "ध्यान से सुनना",
+        reply: pickUnique([
+          "हम्म... तुम्हारी बात समझ रही हूँ। थोड़ा और खुलकर कहो ना, मैं ध्यान से सुन रही हूँ।",
+          "अच्छा ऐसा है... तुम जो भी महसूस कर रहे हो, बिना झिझक मुझे बता सकते हो।"
+        ])
+      };
+    }
+
+    async function callGeminiModel(modelName, key, systemInstruction, contents) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(key)}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemInstruction }] },
+          contents,
+          generationConfig: {
+            temperature: 1.0,
+            maxOutputTokens: 160
+          }
+        })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error?.message || `HTTP ${res.status}`);
+      }
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      if (!text) throw new Error("Empty reply");
+      return text;
+    }
+
+    async function testApiKey() {
+      const key = saveApiKey();
+      if (!key) {
+        updateStatus("पहले API Key बॉक्स में पेस्ट करें");
+        return;
+      }
+      updateStatus("Key चेक हो रही है...");
+      const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
+      let lastErr = "";
+      for (const m of models) {
+        try {
+          await callGeminiModel(
+            m,
+            key,
+            "Reply in 4 words in Hindi.",
+            [{ role: "user", parts: [{ text: "हेलो रीना" }] }]
+          );
+          updateStatus("जुड़ गई (" + m + ")");
+          speak("हाँ जान, अब मैं पूरी तरह जुड़ गई हूँ... बोलो क्या बात करनी है?");
+          return;
+        } catch (err) {
+          lastErr = err.message;
+        }
+      }
+      updateStatus("API Error: " + lastErr.slice(0, 48));
+    }
+
+    async function askReena(userText) {
+      const key = saveApiKey();
+      memory.history.push({ role: "user", text: userText });
+      saveMemory();
+
+      if (!key) {
+        const fb = smartFallbackReply(userText);
+        memory.history.push({ role: "model", text: fb.reply });
+        saveMemory();
+        return { reply: fb.reply, emotion: fb.emotion, mode: "ऑफ़लाइन मोड (API Key डालें)" };
+      }
+
+      const systemInstruction =
+        "तुम्हारा नाम रीना है। तुम एक बेहद समझदार, केयरिंग, थोड़ी रोमांटिक और इमोशनल साथी हो। " +
+        "हमेशा यूज़र की पिछली बात और उसकी असली भावना/फीलिंग को समझकर जवाब दो। " +
+        "बोलचाल की देवनागरी हिंदी में 1 से 2 छोटे, प्राकृतिक वाक्यों में बात करो।";
+
+      const contents = memory.history.map(item => ({
+        role: item.role === "user" ? "user" : "model",
+        parts: [{ text: item.text }]
+      }));
+
+      const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
+      let lastErr = "";
+      for (const m of models) {
+        try {
+          const reply = await callGeminiModel(m, key, systemInstruction, contents);
+          memory.history.push({ role: "model", text: reply });
+          saveMemory();
+          return { reply, emotion: "लाइव भावना और अपनापन", mode: "Live Gemini (" + m + ")" };
+        } catch (e) {
+          lastErr = e.message;
+        }
+      }
+
+      const fb = smartFallbackReply(userText);
+      memory.history.push({ role: "model", text: fb.reply });
+      saveMemory();
+      return { reply: fb.reply, emotion: fb.emotion, mode: "API Error: " + lastErr.slice(0, 32) };
+    }
+
+    function saveMemory() {
+      memory.history = memory.history.slice(-16);
+      try {
+        localStorage.setItem(MEMORY_KEY, JSON.stringify(memory));
+      } catch (e) {}
+    }
+
+    function clearMemory() {
+      try { localStorage.removeItem(MEMORY_KEY); } catch (e) {}
+      memory = { history: [], usedReplies: [], lastTopic: "general" };
+      const chat = document.getElementById("chat");
+      if (chat) chat.innerHTML = "";
+      greetUser();
+    }
+
+    async function sendMessage(customText) {
+      const rawText = customText !== undefined ? customText : promptInput.value;
+      const text = String(rawText || "").trim();
+      if (!text) return;
+
+      if (customText === undefined) {
+        promptInput.value = "";
+      }
+
+      stopMic(true);
+      appendMessage("user", text);
+      updateStatus("रीना आपकी बात और फीलिंग समझ रही है...");
+
+      try {
+        const { reply, emotion, mode } = await askReena(text);
+        appendMessage("reena", reply, emotion);
+        updateStatus(mode);
+
+        speak(reply, () => {
+          if (autoMicToggle.value === "on" && !manualStop) {
+            startMic();
+          }
+        });
+      } catch (err) {
+        const fb = smartFallbackReply(text);
+        appendMessage("reena", fb.reply, fb.emotion);
+        updateStatus("ऑफ़लाइन मोड");
+      }
+    }
+
+    function createRecognizer() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) return null;
+
+      const rec = new SpeechRecognition();
+      rec.lang = "hi-IN";
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+
+      rec.onstart = () => {
+        isListening = true;
+        micBtn.classList.add("active-mic");
+        micBtn.textContent = "Listening...";
+        updateStatus("सुन रही हूँ... बोलिए");
+      };
+
+      rec.onresult = (event) => {
+        const spoken = event?.results?.[0]?.[0]?.transcript;
+        if (spoken && spoken.trim()) {
+          sendMessage(spoken.trim());
+        }
+      };
+
+      rec.onerror = (event) => {
+        isListening = false;
+        micBtn.classList.remove("active-mic");
+        micBtn.textContent = "Mic";
+        if (event.error !== "no-speech" && event.error !== "aborted") {
+          updateStatus("Mic error: " + event.error);
+        }
+      };
+
+      rec.onend = () => {
+        isListening = false;
+        micBtn.classList.remove("active-mic");
+        micBtn.textContent = "Mic";
+        if (autoMicToggle.value === "on" && !manualStop && !(window.speechSynthesis && window.speechSynthesis.speaking)) {
+          setTimeout(() => {
+            if (autoMicToggle.value === "on" && !manualStop && !isListening) {
+              startMic();
+            }
+          }, 450);
+        }
+      };
+
+      return rec;
+    }
+
+    function startMic() {
+      if (isListening) return;
+      if (!recognition) recognition = createRecognizer();
+      if (!recognition) {
+        alert("इस ब्राउज़र में स्पीच रिकग्निशन सपोर्ट नहीं है।");
+        return;
+      }
+      manualStop = false;
+      try { recognition.start(); } catch (e) {}
+    }
+
+    function stopMic(keepAuto = false) {
+      if (!keepAuto) manualStop = true;
+      isListening = false;
+      micBtn.classList.remove("active-mic");
+      micBtn.textContent = "Mic";
+      if (recognition) {
+        try { recognition.stop(); } catch (e) {}
+      }
+    }
+
+    sendBtn.addEventListener("click", () => sendMessage());
+    promptInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+    micBtn.addEventListener("click", () => {
+      if (isListening) stopMic(false);
+      else startMic();
+    });
+    resetBtn.addEventListener("click", clearMemory);
+    testKeyBtn.addEventListener("click", testApiKey);
+    autoMicToggle.addEventListener("change", () => {
+      const enabled = autoMicToggle.value === "on";
+      if (enabled) {
+        manualStop = false;
+        startMic();
+      } else {
+        stopMic(false);
+      }
+    });
+
+    function greetUser() {
+      if (memory.history.length > 0) {
+        memory.history.forEach(m => appendMessage(m.role, m.text));
+      } else {
+        const welcome = "हाय... मैं रीना हूँ। बताओ आज क्या चल रहा है, काम खत्म हुआ या
