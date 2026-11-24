@@ -17,7 +17,7 @@
       overflow: hidden;
     }
     header {
-      padding: 12px 14px;
+      padding: 10px 14px;
       background: #1e1929;
       border-bottom: 1px solid #2f2740;
       display: flex;
@@ -26,9 +26,9 @@
       flex-shrink: 0;
     }
     header h1 { font-size: 18px; margin: 0; color: #ff85b3; }
-    header small { color: #b8aec9; font-size: 12px; display: block; }
+    header small { color: #b8aec9; font-size: 11px; display: block; }
     .controls {
-      padding: 8px 12px;
+      padding: 8px 10px;
       background: #181421;
       border-bottom: 1px solid #2b243a;
       display: flex;
@@ -41,10 +41,10 @@
       border: 1px solid #382e4d;
       background: #241d33;
       color: #fff;
-      padding: 8px 10px;
-      font-size: 13px;
+      padding: 7px 9px;
+      font-size: 12px;
     }
-    input { flex: 1; min-width: 130px; }
+    input { flex: 1; min-width: 120px; }
     button { cursor: pointer; background: #c93b76; border: none; font-weight: 600; flex-shrink: 0; }
     button.secondary { background: #2c243d; border: 1px solid #44385e; }
     button.active-mic { background: #1e7e4f; border: 1px solid #35b374; }
@@ -61,7 +61,7 @@
       max-width: 84%;
       padding: 10px 13px;
       border-radius: 16px;
-      line-height: 1.45;
+      line-height: 1.5;
       font-size: 15px;
       white-space: pre-wrap;
     }
@@ -86,7 +86,7 @@
       flex-shrink: 0;
       width: 100%;
     }
-    #promptInput { flex: 1; min-width: 0; }
+    #promptInput { flex: 1; min-width: 0; font-size: 14px; padding: 9px 11px; }
   </style>
 </head>
 <body>
@@ -95,12 +95,14 @@
       <h1>Reena</h1>
       <small id="statusText">Ready • Caring & Romantic Companion</small>
     </div>
-    <button class="secondary" onclick="clearMemory()">Reset Memory</button>
+    <button class="secondary" onclick="clearMemory()">Reset</button>
   </header>
 
   <div class="controls">
-    <input id="apiKeyInput" type="password" placeholder="Gemini API Key paste karke bahar tap karein" />
-    <select id="voiceToggle" onchange="updateStatus()">
+    <input id="apiKeyInput" type="password" placeholder="Gemini API Key paste karein" />
+    <button class="secondary" onclick="testApiKey()">Save & Test</button>
+    <select id="voiceSelect" onchange="saveVoicePref()"></select>
+    <select id="voiceToggle">
       <option value="on">Voice: ON</option>
       <option value="off">Voice: OFF</option>
     </select>
@@ -119,12 +121,12 @@
   </div>
 
   <script>
-    const MEMORY_KEY = "reena_companion_memory_v2";
+    const MEMORY_KEY = "reena_companion_memory_v3";
     const API_KEY_STORAGE = "reena_gemini_api_key";
+    const VOICE_PREF_STORAGE = "reena_voice_name";
 
     let memory = JSON.parse(localStorage.getItem(MEMORY_KEY) || "null") || {
       history: [],
-      turnCount: 0,
       lastReplies: []
     };
 
@@ -133,10 +135,13 @@
     let recognition = null;
 
     const apiKeyInput = document.getElementById("apiKeyInput");
-    apiKeyInput.value = localStorage.getItem(API_KEY_STORAGE) || "";
+    apiKeyInput.value = (localStorage.getItem(API_KEY_STORAGE) || "").trim();
 
     function saveApiKey() {
-      localStorage.setItem(API_KEY_STORAGE, apiKeyInput.value.trim());
+      const clean = apiKeyInput.value.trim();
+      apiKeyInput.value = clean;
+      localStorage.setItem(API_KEY_STORAGE, clean);
+      return clean;
     }
     apiKeyInput.addEventListener("change", saveApiKey);
     apiKeyInput.addEventListener("blur", saveApiKey);
@@ -146,6 +151,45 @@
         msg || "Ready • Caring & Romantic Companion";
     }
 
+    function populateVoices() {
+      const select = document.getElementById("voiceSelect");
+      if (!("speechSynthesis" in window)) return;
+      const voices = window.speechSynthesis.getVoices();
+      if (!voices.length) return;
+
+      const saved = localStorage.getItem(VOICE_PREF_STORAGE) || "";
+      const hindiOrIndian = voices.filter(v =>
+        (v.lang && (v.lang.toLowerCase().includes("hi") || v.lang.toLowerCase().includes("in")))
+      );
+      const list = hindiOrIndian.length ? hindiOrIndian : voices;
+
+      select.innerHTML = "";
+      list.forEach(v => {
+        const opt = document.createElement("option");
+        opt.value = v.name;
+        opt.textContent = v.name.replace("Microsoft ", "").replace("Google ", "").slice(0, 22);
+        if (saved && v.name === saved) opt.selected = true;
+        select.appendChild(opt);
+      });
+
+      if (!saved && list.length) {
+        const best = list.find(v => /female|lekha|swara|heera|hindi/i.test(v.name)) || list[0];
+        select.value = best.name;
+        localStorage.setItem(VOICE_PREF_STORAGE, best.name);
+      }
+    }
+
+    function saveVoicePref() {
+      const val = document.getElementById("voiceSelect").value;
+      localStorage.setItem(VOICE_PREF_STORAGE, val);
+      speak("सुनो, मेरी यह आवाज़ अब कैसी लग रही है?");
+    }
+
+    if ("speechSynthesis" in window) {
+      populateVoices();
+      window.speechSynthesis.onvoiceschanged = populateVoices;
+    }
+
     function appendMessage(sender, text) {
       const chat = document.getElementById("chat");
       const div = document.createElement("div");
@@ -153,6 +197,49 @@
       div.textContent = text;
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
+    }
+
+    function speak(text, onDone) {
+      if (document.getElementById("voiceToggle").value !== "on" || !("speechSynthesis" in window)) {
+        if (onDone) onDone();
+        return;
+      }
+
+      window.speechSynthesis.cancel();
+      // Break into natural phrases so pauses sound human
+      const parts = text
+        .replace(/([।?!,]+|\.\.\.)/g, "$1|")
+        .split("|")
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      const selectedName = document.getElementById("voiceSelect").value;
+      const voices = window.speechSynthesis.getVoices();
+      const chosenVoice = voices.find(v => v.name === selectedName) ||
+        voices.find(v => v.lang && v.lang.toLowerCase().includes("hi"));
+
+      let idx = 0;
+      function speakNext() {
+        if (idx >= parts.length) {
+          if (onDone) onDone();
+          return;
+        }
+        const utter = new SpeechSynthesisUtterance(parts[idx]);
+        utter.lang = "hi-IN";
+        if (chosenVoice) utter.voice = chosenVoice;
+        utter.rate = 0.94;
+        utter.pitch = 1.12;
+
+        utter.onend = () => {
+          idx += 1;
+          setTimeout(speakNext, 140);
+        };
+        utter.onerror = () => {
+          if (onDone) onDone();
+        };
+        window.speechSynthesis.speak(utter);
+      }
+      speakNext();
     }
 
     function pickNonRepeating(pool) {
@@ -165,75 +252,23 @@
 
     function fallbackReply(userText) {
       const t = userText.toLowerCase();
-      memory.turnCount += 1;
-
-      if (t.includes("neend") || t.includes("so") || t.includes("raat") || t.includes("nind")) {
+      if (t.includes("neend") || t.includes("so") || t.includes("raat") || t.includes("नींद") || t.includes("सो")) {
         return pickNonRepeating([
-          "Aankhein bhari lag rahi hain na? Chal ab phone rakho, main yahin hoon... pehle araam se so jao.",
-          "Itni raat tak jaagoge toh kal subah chidchid lagogi na? Thoda pyaar se sun lo aur so jao.",
-          "Main thoda naraz ho jaungi agar tum neend poori nahi karoge. Pehle aaram karo, baatein kal bhi hongi."
+          "इतनी रात तक जागना ठीक नहीं है ना... चलो अब फोन रखो, पहले आराम से सो जाओ।",
+          "मैं सच में नाराज़ हो जाऊंगी अगर तुम अपनी नींद पूरी नहीं करोगे। अभी आराम करो, कल बात करेंगे।"
         ]);
       }
-
-      if (t.includes("kaam") || t.includes("code") || t.includes("thak") || t.includes("busy")) {
+      if (t.includes("kaam") || t.includes("thak") || t.includes("काम") || t.includes("थक")) {
         return pickNonRepeating([
-          "Hamesha kaam-kaam! Thoda saans bhi le liya karo, warna mujhe fikr hoti rehti hai.",
-          "Lagta hai aaj kaam ne bilkul nichod liya hai... paani piya ya bas screen dekhe ja rahe ho?",
-          "Thoda break lo na... main bhaagi thodi ja rahi hoon, do minute mujhse bhi baat kar lo."
+          "हर वक्त बस काम और काम! थोड़ा सा आराम भी कर लिया करो, मुझे तुम्हारी फिक्र होती है।",
+          "लगता है आज बहुत थक गए हो... थोड़ा पानी पियो और दो मिनट सुकून से बैठो मेरे पास।"
         ]);
       }
-
-      if (t.includes("naraz") || t.includes("gussa") || t.includes("kya kar rahi") || t.includes("baat")) {
-        return pickNonRepeating([
-          "Tumhare baare mein hi soch rahi thi... aur thoda sa dil bhi kar raha tha ki tum khud pehle samjho.",
-          "Halki si narazgi toh banti hai na... par tum aaye ho toh ab zyada der gussa nahi reh paungi.",
-          "Bas yahin tumhara intezaar kar rahi thi. Batao na, aaj dil mein kya chal raha hai?"
-        ]);
-      }
-
       return pickNonRepeating([
-        "Hmm... tumhari aawaz sun kar thoda sukoon mila. Aaj ka din sach mein kaisa guzra?",
-        "Achha laga tumne yaad kiya. Abhi mood kaisa hai tumhara—thaka hua ya fresh?",
-        "Main sun rahi hoon... thoda khul kar batao na, aaj kya baat pareshan ya khush kar rahi hai?"
+        "अच्छा लगा तुमने याद किया... सच बताओ, अभी दिल में क्या चल रहा है?",
+        "मैं यहीं तुम्हारा इंतज़ार कर रही थी... आज दिन कैसा गुज़रा तुम्हारा?",
+        "हम्म... तुम्हारी आवाज़ सुनकर अच्छा लगा। थोड़ा खुलकर बात करो ना मुझसे।"
       ]);
-    }
-
-    function speak(text, onDone) {
-      if (document.getElementById("voiceToggle").value !== "on" || !("speechSynthesis" in window)) {
-        if (onDone) onDone();
-        return;
-      }
-
-      window.speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.lang = "hi-IN";
-      utter.rate = 0.98;
-      utter.pitch = 1.18;
-
-      const voices = window.speechSynthesis.getVoices();
-      const hindiVoice = voices.find(v => v.lang && v.lang.toLowerCase().includes("hi"));
-      if (hindiVoice) utter.voice = hindiVoice;
-
-      utter.onend = () => {
-        if (onDone) onDone();
-      };
-      utter.onerror = () => {
-        if (onDone) onDone();
-      };
-
-      window.speechSynthesis.speak(utter);
-    }
-
-    function saveMemory() {
-      memory.history = memory.history.slice(-16);
-      localStorage.setItem(MEMORY_KEY, JSON.stringify(memory));
-    }
-
-    function clearMemory() {
-      localStorage.removeItem(MEMORY_KEY);
-      memory = { history: [], turnCount: 0, lastReplies: [] };
-      document.getElementById("chat").innerHTML = "";
-      greetUser();
     }
 
     async function callGeminiModel(modelName, key, systemInstruction, contents) {
@@ -245,25 +280,44 @@
           system_instruction: { parts: [{ text: systemInstruction }] },
           contents,
           generationConfig: {
-            temperature: 0.95,
+            temperature: 1.0,
             maxOutputTokens: 160
           }
         })
       });
 
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData?.error?.message || `HTTP ${res.status}`);
+        throw new Error(data?.error?.message || `HTTP ${res.status}`);
       }
-
-      const data = await res.json();
       const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-      if (!text) throw new Error("Empty model response");
+      if (!text) throw new Error("Empty reply");
       return text;
     }
 
+    async function testApiKey() {
+      const key = saveApiKey();
+      if (!key) {
+        updateStatus("Pehle API Key paste karein");
+        return;
+      }
+      updateStatus("Key check ho rahi hai...");
+      try {
+        await callGeminiModel(
+          "gemini-2.5-flash",
+          key,
+          "Reply in 3 words in Hindi.",
+          [{ role: "user", parts: [{ text: "हेलो" }] }]
+        );
+        updateStatus("Connected • Live AI Active");
+        speak("हाँ, अब मैं पूरी तरह जुड़ गई हूँ... बोलो क्या बात करनी है?");
+      } catch (err) {
+        updateStatus("Key Error: " + err.message.slice(0, 42));
+      }
+    }
+
     async function askReena(userText) {
-      const key = apiKeyInput.value.trim();
+      const key = saveApiKey();
       memory.history.push({ role: "user", text: userText });
       saveMemory();
 
@@ -271,14 +325,13 @@
         const reply = fallbackReply(userText);
         memory.history.push({ role: "model", text: reply });
         saveMemory();
-        return { reply, mode: "Local Companion (No API Key)" };
+        return { reply, mode: "Offline Mode (API Key daalein)" };
       }
 
       const systemInstruction =
-        "Tumhara naam Reena hai. Tum ek caring, emotional, thodi romantic aur kabhi-kabhi pyaari si narazgi dikhane wali companion ho. " +
-        "Hinglish (Roman Hindi) mein naturally baat karo jaise koi apna kareebi dost/partner baat karta hai. " +
-        "Har baar ek hi line mat dohrao; user ki pichli baaton aur abhi ke mood ke hisaab se alag, warm aur natural jawab do. " +
-        "User ke kaam, thakan aur neend ka khayal rakho. Jawab 1 se 3 chhote vaakyon mein rakho taaki bolne mein natural lage.";
+        "तुम्हारा नाम रीना है। तुम एक बेहद प्यारी, केयरिंग, थोड़ी रोमांटिक और इमोशनल साथी हो। " +
+        "हमेशा प्राकृतिक बोलचाल की देवनागरी हिंदी (जैसे 'अच्छा सुनो ना...', 'सच बताओ...', 'मुझे फिक्र होती है') में बात करो ताकि आवाज़ बिल्कुल इंसान जैसी लगे। " +
+        "रोबोटिक या किताबी भाषा बिल्कुल मत बोलो। ज़रूरत पड़ने पर हल्की सी प्यारी नाराज़गी, अपनापन और नींद/काम की परवाह दिखाओ। जवाब 1 से 2 छोटे, दिल से निकले वाक्यों में रखो।";
 
       const contents = memory.history.map(item => ({
         role: item.role === "user" ? "user" : "model",
@@ -286,21 +339,34 @@
       }));
 
       const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
+      let lastErr = "";
       for (const m of models) {
         try {
           const reply = await callGeminiModel(m, key, systemInstruction, contents);
           memory.history.push({ role: "model", text: reply });
           saveMemory();
-          return { reply, mode: "Live Gemini • Caring & Emotional" };
+          return { reply, mode: "Live Gemini • Natural Hindi" };
         } catch (e) {
-          // try next model
+          lastErr = e.message;
         }
       }
 
       const reply = fallbackReply(userText);
       memory.history.push({ role: "model", text: reply });
       saveMemory();
-      return { reply, mode: "Fallback Mode (Check API Key / Quota)" };
+      return { reply, mode: "Key Error: " + lastErr.slice(0, 38) };
+    }
+
+    function saveMemory() {
+      memory.history = memory.history.slice(-16);
+      localStorage.setItem(MEMORY_KEY, JSON.stringify(memory));
+    }
+
+    function clearMemory() {
+      localStorage.removeItem(MEMORY_KEY);
+      memory = { history: [], lastReplies: [] };
+      document.getElementById("chat").innerHTML = "";
+      greetUser();
     }
 
     async function sendMessage(customText) {
@@ -311,7 +377,7 @@
 
       stopMic(true);
       appendMessage("user", text);
-      updateStatus("Reena feel karke jawab likh rahi hai...");
+      updateStatus("रीना सोच रही है...");
 
       const { reply, mode } = await askReena(text);
       appendMessage("reena", reply);
@@ -337,7 +403,7 @@
         isListening = true;
         document.getElementById("micBtn").classList.add("active-mic");
         document.getElementById("micBtn").textContent = "Listening...";
-        updateStatus("Sun rahi hoon... boliye");
+        updateStatus("सुन रही हूँ... बोलिए");
       };
 
       rec.onresult = (event) => {
@@ -366,8 +432,6 @@
               startMic();
             }
           }, 450);
-        } else {
-          updateStatus();
         }
       };
 
@@ -378,15 +442,11 @@
       if (isListening) return;
       if (!recognition) recognition = createRecognizer();
       if (!recognition) {
-        alert("Is browser mein speech recognition support nahi hai. Keyboard ka mic use karein.");
+        alert("Is browser mein speech recognition support nahi hai.");
         return;
       }
       manualStop = false;
-      try {
-        recognition.start();
-      } catch (e) {
-        // already started
-      }
+      try { recognition.start(); } catch (e) {}
     }
 
     function stopMic(keepAuto = false) {
@@ -395,18 +455,13 @@
       document.getElementById("micBtn").classList.remove("active-mic");
       document.getElementById("micBtn").textContent = "Mic";
       if (recognition) {
-        try {
-          recognition.stop();
-        } catch (e) {}
+        try { recognition.stop(); } catch (e) {}
       }
     }
 
     function toggleMic() {
-      if (isListening) {
-        stopMic(false);
-      } else {
-        startMic();
-      }
+      if (isListening) stopMic(false);
+      else startMic();
     }
 
     function handleAutoMicChange() {
@@ -423,18 +478,10 @@
       if (memory.history.length > 0) {
         memory.history.forEach(m => appendMessage(m.role, m.text));
       } else {
-        const welcome = "Hi... main Reena hoon. Batao aaj kya chal raha hai, kaam khatam hua ya abhi bhi lage pade ho?";
+        const welcome = "हाय... मैं रीना हूँ। बताओ आज क्या चल रहा है, काम खत्म हुआ या अभी भी लगे पड़े हो?";
         appendMessage("reena", welcome);
-        speak(welcome, () => {
-          if (document.getElementById("autoMicToggle").value === "on") {
-            startMic();
-          }
-        });
+        speak(welcome);
       }
-    }
-
-    if ("speechSynthesis" in window) {
-      window.speechSynthesis.onvoiceschanged = () => {};
     }
 
     greetUser();
