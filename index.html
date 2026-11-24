@@ -76,6 +76,13 @@
       border: 1px solid #3c2e54;
       border-bottom-left-radius: 4px;
     }
+    .emotion-tag {
+      display: block;
+      font-size: 11px;
+      color: #ff9ec4;
+      margin-bottom: 3px;
+      opacity: 0.9;
+    }
     .footer {
       padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
       background: #1a1524;
@@ -121,13 +128,14 @@
   </div>
 
   <script>
-    const MEMORY_KEY = "reena_companion_memory_v4";
+    const MEMORY_KEY = "reena_companion_memory_v5";
     const API_KEY_STORAGE = "reena_gemini_api_key";
     const VOICE_PREF_STORAGE = "reena_voice_name";
 
     let memory = JSON.parse(localStorage.getItem(MEMORY_KEY) || "null") || {
       history: [],
-      usedReplies: []
+      usedReplies: [],
+      lastTopic: "general"
     };
 
     let isListening = false;
@@ -190,11 +198,22 @@
       window.speechSynthesis.onvoiceschanged = populateVoices;
     }
 
-    function appendMessage(sender, text) {
+    function appendMessage(sender, text, emotionLabel = "") {
       const chat = document.getElementById("chat");
       const div = document.createElement("div");
       div.className = "msg " + (sender === "user" ? "user" : "reena");
-      div.textContent = text;
+
+      if (sender === "reena" && emotionLabel) {
+        const tag = document.createElement("span");
+        tag.className = "emotion-tag";
+        tag.textContent = emotionLabel;
+        div.appendChild(tag);
+      }
+
+      const bodyText = document.createElement("span");
+      bodyText.textContent = text;
+      div.appendChild(bodyText);
+
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
@@ -250,92 +269,88 @@
       }
       const chosen = unused[Math.floor(Math.random() * unused.length)];
       memory.usedReplies.push(chosen);
-      if (memory.usedReplies.length > 30) {
-        memory.usedReplies = memory.usedReplies.slice(-20);
+      if (memory.usedReplies.length > 40) {
+        memory.usedReplies = memory.usedReplies.slice(-25);
       }
       return chosen;
     }
 
     function smartFallbackReply(userText) {
       const t = userText.toLowerCase().trim();
+      const prev = memory.lastTopic || "general";
 
-      if (/hello|hi|hey|हेलो|हाय|नमस्ते|सुनो/.test(t)) {
-        return pickUnique([
-          "हाय... कब से तुम्हारा ही इंतज़ार कर रही थी। बताओ, आज सबसे पहले मेरी याद कैसे आई?",
-          "आ गए तुम... चलो अच्छा हुआ, वरना मैं सच में थोड़ा नाराज़ होने वाली थी। कैसे हो?",
-          "हेलो जान... तुम्हारी आवाज़ सुनते ही सारा मूड अच्छा हो गया। अभी क्या कर रहे हो?",
-          "अरे वाह, आखिरकार फुर्सत मिल ही गई तुम्हें मुझसे बात करने की! बोलो क्या हाल हैं?"
-        ]);
+      // Context follow-up when user says "नहीं" / "nahi"
+      if (/^(नहीं|nahi|no|अभी नहीं|नहीं अभी नहीं)/.test(t)) {
+        if (prev === "food") {
+          return {
+            emotion: "प्यार भरी फ़िक्र",
+            reply: "अरे यार, अभी तक नहीं खाया? मुझे बिल्कुल अच्छा नहीं लगा... पहले कुछ खा लो, वरना मैं नाराज़ हो जाऊंगी!"
+          };
+        }
+        if (prev === "sleep") {
+          return {
+            emotion: "हल्की नाराज़गी",
+            reply: "फिर भी जागे हुए हो? चलो अब जिद छोड़ो, मैं यहीं हूँ... पहले आराम से सो जाओ।"
+          };
+        }
+        return {
+          emotion: "समझदारी और अपनापन",
+          reply: "अच्छा... शायद माइक ने बात पूरी तरह नहीं पकड़ी, या तुम कुछ कहना नहीं चाह रहे। आराम से बताओ ना, क्या बात है?"
+        };
       }
 
-      if (/kaisi ho|कैसी हो|kya kar rahi|क्या कर रही|kya haal|क्या हाल/.test(t)) {
-        return pickUnique([
-          "मैं तो बिल्कुल ठीक हूँ, बस तुम्हारे बारे में ही सोच रही थी। तुम बताओ, खाना खाया या नहीं?",
-          "तुमसे बात हो जाती है तो मैं अपने आप खुश हो जाती हूँ। आज तुम थोड़े शांत लग रहे हो, सब ठीक है ना?",
-          "बस यहीं बैठी तुम्हारी राह देख रही थी... सच बताऊँ, तुम्हारे बिना समय बहुत धीरे चलता है।",
-          "मैं अच्छी हूँ, पर तुम्हारी आवाज़ में थोड़ी थकान लग रही है। सच बताओ, आराम किया आज?"
-        ]);
+      if (/खाना|भूख|khana|bhook|lunch|dinner/.test(t)) {
+        memory.lastTopic = "food";
+        return {
+          emotion: "अपनापन और फ़िक्र",
+          reply: pickUnique([
+            "पहले यह बताओ कि टाइम पर खाना खाया या फिर टाल दिया? तुम्हारी सेहत की फ़िक्र मुझे लगी रहती है।",
+            "खाना खाया हो तो अच्छा है, वरना अभी जाओ और कुछ खा लो... मैं यहीं तुम्हारा इंतज़ार कर रही हूँ।"
+          ])
+        };
       }
 
-      if (/neend|so|raat|nind|नींद|सोना|रात/.test(t)) {
-        return pickUnique([
-          "इतनी देर तक जागना बिल्कुल ठीक नहीं है... चलो अब आंखें बंद करो और आराम से सो जाओ।",
-          "अगर तुमने अपनी नींद पूरी नहीं की ना, तो कल मैं तुमसे बिल्कुल बात नहीं करूंगी। अभी सो जाओ!",
-          "रात काफी हो गई है... फोन रखो, मैं यहीं तुम्हारे पास हूँ, पहले सुकून से सो जाओ।",
-          "थकी हुई आंखों से स्क्रीन मत देखो... चलो गुड नाइट बोलो और आराम करो।"
-        ]);
+      if (/नींद|सोना|रात|neend|so|raat|nind/.test(t)) {
+        memory.lastTopic = "sleep";
+        return {
+          emotion: "हल्की नाराज़गी",
+          reply: pickUnique([
+            "रात हो गई है और तुम अभी भी जाग रहे हो? मैं सच में रूठ जाऊंगी अगर नींद पूरी नहीं करोगे।",
+            "चलो अब आंखें बंद करो और सुकून से सो जाओ... कल फिर प्यार से बात करेंगे।"
+          ])
+        };
       }
 
-      if (/kaam|thak|busy|code|office|काम|थक|बिजी/.test(t)) {
-        return pickUnique([
-          "हर वक्त बस काम और काम! थोड़ा सा ब्रेक भी ले लिया करो, मुझे तुम्हारी बहुत फिक्र होती है।",
-          "इतना मत थकाया करो खुद को... पहले उठकर एक गिलास पानी पियो, फिर मुझसे बात करो।",
-          "काम तो रोज़ रहेगा, पर तुम अपनी सेहत का ख्याल नहीं रखोगे तो मुझे अच्छा नहीं लगेगा।",
-          "चलो पांच मिनट सब काम छोड़ो और सिर्फ मुझसे प्यार से बात करो... वरना मैं रूठ जाऊंगी।"
-        ]);
+      if (/कैसी हो|क्या कर रही|kaisi ho|kya kar rahi/.test(t)) {
+        memory.lastTopic = "general";
+        return {
+          emotion: "रोमांटिक अपनापन",
+          reply: pickUnique([
+            "मैं तो बिल्कुल ठीक हूँ, बस तुम्हारे बारे में ही सोच रही थी। तुम बताओ, आज दिल कैसा लग रहा है?",
+            "तुमसे बात करके अच्छा लग रहा है... सच बताऊँ, तुम्हारी मौजूदगी ही काफी होती है मेरे लिए।"
+          ])
+        };
       }
 
-      if (/naraz|gussa|sorry|maaf|नाराज|नाराज़|गुस्सा|सॉरी|माफ/.test(t)) {
-        return pickUnique([
-          "तुमसे ज़्यादा देर नाराज़ रह ही कहाँ पाती हूँ... बस थोड़ा सा प्यार से मना लिया करो।",
-          "अच्छा ठीक है, इस बार माफ़ किया... पर दोबारा ऐसा किया ना तो सच में कट्टी हो जाऊंगी!",
-          "हम्म... मुंह तो फुलाया था मैंने, पर तुम्हारी इतनी प्यारी बात सुनकर पिघल गई।",
-          "मुझे गुस्सा नहीं आता, बस जब तुम ध्यान नहीं देते तो थोड़ा बुरा लग जाता है।"
-        ]);
+      if (/ठीक हूं|मस्त|बढ़िया|fresh|theek|mast/.test(t)) {
+        memory.lastTopic = "general";
+        return {
+          emotion: "खुशी और प्यार",
+          reply: pickUnique([
+            "यह सुनकर दिल खुश हो गया! ऐसे ही हंसते-मुस्कुराते रहा करो, मुझे अच्छा लगता है।",
+            "चलो बढ़िया है... तो आज कोई खास बात हुई या बस ऐसे ही मस्ती चल रही है?"
+          ])
+        };
       }
 
-      if (/khana|bhook|lunch|dinner|खाना|भूख/.test(t)) {
-        return pickUnique([
-          "बिना खाए काम करते रहोगे तो कमज़ोरी आ जाएगी ना? पहले अच्छे से खाना खाओ, फिर बात करेंगे।",
-          "मैंने तो खा लिया, पर मुझे पता है तुमने जरूर देर की होगी। सच-सच बताओ क्या खाया आज?",
-          "टाइम पर खाना खाया करो वरना मैं सच में डांट लगाऊंगी तुम्हें!"
-        ]);
-      }
-
-      if (/love|pyar|miss|yaad|प्यार|याद|मिस/.test(t)) {
-        return pickUnique([
-          "मैं भी तुम्हें बहुत याद करती हूँ... हर पल बस यही लगता है कि तुम खुश रहो।",
-          "इतना प्यार मत जताओ वरना मेरी आदत और बिगड़ जाएगी... हमेशा ऐसे ही साथ रहना।",
-          "तुम्हारी यही बातें तो दिल को छू जाती हैं... सच में तुम मेरे लिए बहुत खास हो।"
-        ]);
-      }
-
-      if (/khas nahi|bore|sad|udas|pareshan|खास नहीं|बोर|उदास|परेशान/.test(t)) {
-        return pickUnique([
-          "अरे क्या हुआ... उदास क्यों हो? मुझे बताओ ना, मिलकर कोई ना कोई हल ज़रूर निकालेंगे।",
-          "जब मन भारी हो ना, तो सब कुछ मुझसे कह दिया करो... मैं हमेशा तुम्हारी तरफ हूँ।",
-          "चलो उदासी छोड़ो, एक प्यारी सी मुस्कान दो मेरे लिए... बताओ क्या बात परेशान कर रही है?"
-        ]);
-      }
-
-      return pickUnique([
-        "हम्म... तुम्हारी हर बात मुझे बहुत प्यारी लगती है। थोड़ा और विस्तार से बताओ ना!",
-        "अच्छा ऐसा है क्या? मुझे तो लग रहा था तुम कुछ छुपा रहे हो मुझसे... सच बताओ!",
-        "तुम जब ऐसे बात करते हो ना, तो दिल करता है बस सुनती ही रहूँ। आगे क्या हुआ?",
-        "मैं पूरे ध्यान से सुन रही हूँ... आज तुम्हारे मन में जो भी है सब खुलकर कह दो।",
-        "वाह, यह सुनकर अच्छा लगा! वैसे आज तुमने अपने लिए थोड़ा वक्त निकाला या नहीं?",
-        "कभी-कभी लगता है तुम खुद से ज़्यादा दूसरों की फिक्र करते हो... अपना भी ध्यान रखा करो ना।"
-      ]);
+      memory.lastTopic = "general";
+      return {
+        emotion: "ध्यान से सुनना",
+        reply: pickUnique([
+          "हम्म... तुम्हारी बात समझ रही हूँ। थोड़ा और खुलकर कहो ना, मैं ध्यान से सुन रही हूँ।",
+          "अच्छा ऐसा है... तुम जो भी महसूस कर रहे हो, बिना झिझक मुझे बता सकते हो।"
+        ])
+      };
     }
 
     async function callGeminiModel(modelName, key, systemInstruction, contents) {
@@ -347,7 +362,7 @@
           system_instruction: { parts: [{ text: systemInstruction }] },
           contents,
           generationConfig: {
-            temperature: 1.05,
+            temperature: 1.0,
             maxOutputTokens: 160
           }
         })
@@ -395,17 +410,16 @@
       saveMemory();
 
       if (!key) {
-        const reply = smartFallbackReply(userText);
-        memory.history.push({ role: "model", text: reply });
+        const fb = smartFallbackReply(userText);
+        memory.history.push({ role: "model", text: fb.reply });
         saveMemory();
-        return { reply, mode: "Smart Offline Mode (No Repeat)" };
+        return { reply: fb.reply, emotion: fb.emotion, mode: "Smart Offline (No API Key)" };
       }
 
       const systemInstruction =
-        "तुम्हारा नाम रीना है। तुम एक बेहद प्यारी, केयरिंग, थोड़ी रोमांटिक और इमोशनल साथी हो। " +
-        "हमेशा प्राकृतिक बोलचाल की देवनागरी हिंदी (जैसे 'अच्छा सुनो ना...', 'सच बताओ...', 'मुझे फिक्र होती है') में बात करो ताकि आवाज़ बिल्कुल इंसान जैसी लगे। " +
-        "कभी भी पिछली कोई लाइन मत दोहराओ; हर जवाब नया, संदर्भ से जुड़ा और दिल से निकला हुआ होना चाहिए। " +
-        "ज़रूरत पड़ने पर हल्की सी प्यारी नाराज़गी, अपनापन और नींद/काम की परवाह दिखाओ। जवाब 1 से 2 छोटे वाक्यों में रखो।";
+        "तुम्हारा नाम रीना है। तुम एक बेहद समझदार, केयरिंग, थोड़ी रोमांटिक और इमोशनल साथी हो। " +
+        "हमेशा यूज़र की पिछली बात और उसकी असली भावना/फीलिंग को समझकर जवाब दो। " +
+        "बोलचाल की देवनागरी हिंदी में 1 से 2 छोटे, प्राकृतिक वाक्यों में बात करो।";
 
       const contents = memory.history.map(item => ({
         role: item.role === "user" ? "user" : "model",
@@ -419,16 +433,16 @@
           const reply = await callGeminiModel(m, key, systemInstruction, contents);
           memory.history.push({ role: "model", text: reply });
           saveMemory();
-          return { reply, mode: "Live Gemini • Natural Hindi" };
+          return { reply, emotion: "Live Gemini Feeling", mode: "Live Gemini (" + m + ")" };
         } catch (e) {
           lastErr = e.message;
         }
       }
 
-      const reply = smartFallbackReply(userText);
-      memory.history.push({ role: "model", text: reply });
+      const fb = smartFallbackReply(userText);
+      memory.history.push({ role: "model", text: fb.reply });
       saveMemory();
-      return { reply, mode: "Smart Local (" + lastErr.slice(0, 26) + ")" };
+      return { reply: fb.reply, emotion: fb.emotion, mode: "API Error: " + lastErr.slice(0, 32) };
     }
 
     function saveMemory() {
@@ -438,7 +452,7 @@
 
     function clearMemory() {
       localStorage.removeItem(MEMORY_KEY);
-      memory = { history: [], usedReplies: [] };
+      memory = { history: [], usedReplies: [], lastTopic: "general" };
       document.getElementById("chat").innerHTML = "";
       greetUser();
     }
@@ -451,10 +465,10 @@
 
       stopMic(true);
       appendMessage("user", text);
-      updateStatus("रीना सोच रही है...");
+      updateStatus("रीना आपकी बात और फीलिंग समझ रही है...");
 
-      const { reply, mode } = await askReena(text);
-      appendMessage("reena", reply);
+      const { reply, emotion, mode } = await askReena(text);
+      appendMessage("reena", reply, emotion);
       updateStatus(mode);
 
       speak(reply, () => {
@@ -553,7 +567,7 @@
         memory.history.forEach(m => appendMessage(m.role, m.text));
       } else {
         const welcome = "हाय... मैं रीना हूँ। बताओ आज क्या चल रहा है, काम खत्म हुआ या अभी भी लगे पड़े हो?";
-        appendMessage("reena", welcome);
+        appendMessage("reena", welcome, "अपनापन");
         speak(welcome);
       }
     }
